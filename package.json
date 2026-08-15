@@ -1,0 +1,27 @@
+{
+  "name": "mymem",
+  "version": "0.1.0",
+  "description": "Shared memory for every AI agent, on every device — free, open-source, MCP-native.",
+  "type": "module",
+  "license": "MIT",
+  "bin": {
+    "mymem": "dist/index.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/index.ts",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.7.0"
+  }
+}
