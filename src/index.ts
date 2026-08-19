@@ -6,10 +6,13 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 import { MemoryStore } from "./store.js";
 import { estimateTokens } from "./tokens.js";
+import { AssociationStore } from "./associations.js";
 
 const home = process.env.MYMEM_HOME?.trim() || path.join(homedir(), ".mymem");
 const store = new MemoryStore(home);
+const associations = new AssociationStore(home);
 await store.initialize();
+await associations.initialize();
 
 const kind = z.enum(["fact", "decision", "preference", "todo"]);
 
@@ -21,7 +24,7 @@ function errorResult(error: unknown) {
   return { content: [{ type: "text" as const, text: message }], isError: true };
 }
 
-const server = new McpServer({ name: "mymem", version: "0.3.0" });
+const server = new McpServer({ name: "mymem", version: "0.4.0" });
 
 server.registerTool(
   "mymem_remember",
@@ -233,6 +236,51 @@ server.registerTool(
 );
 
 server.registerTool(
+  "mymem_associate",
+  {
+    title: "Associate or dissociate two memories",
+    description: "Create or change a stable, experience-based link between two memories -- distinct from decay/salience, which fades with time. Association weight only moves when reinforced or weakened (asymptotic: diminishing returns, approaches but never reaches full certainty or zero), never on its own. Use 'reinforce' when two things really do belong together, 'weaken' to correct a link that turned out wrong.",
+    inputSchema: {
+      from_id: z.string().uuid(),
+      to_id: z.string().uuid(),
+      relation: z.string().min(1).max(100).default("related_to"),
+      signal: z.enum(["reinforce", "weaken"]).default("reinforce"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+  },
+  async ({ from_id, to_id, relation, signal }) => {
+    try {
+      const edge = await associations.associate(from_id, to_id, relation, signal);
+      return jsonResult({ association: edge });
+    } catch (error) {
+      return errorResult(error);
+    }
+  },
+);
+
+server.registerTool(
+  "mymem_associations",
+  {
+    title: "Walk the associative layer from one memory",
+    description: "Short associative paths outward from one memory, ranked by weight (strongest/most-experienced links first) -- not a text search, a graph walk. depth=1 is direct neighbors; depth=2 spreads one hop further (activation spreading), weight-discounted per hop.",
+    inputSchema: {
+      memory_id: z.string().uuid(),
+      depth: z.union([z.literal(1), z.literal(2)]).default(1),
+      limit: z.number().int().min(1).max(100).default(20),
+    },
+    annotations: { readOnlyHint: true },
+  },
+  async ({ memory_id, depth, limit }) => {
+    try {
+      const results = await associations.walk(memory_id, depth, limit);
+      return jsonResult({ results, count: results.length });
+    } catch (error) {
+      return errorResult(error);
+    }
+  },
+);
+
+server.registerTool(
   "mymem_get_context",
   {
     title: "Get bounded context for a task (primary entry point)",
@@ -270,11 +318,34 @@ server.registerTool(
       // being useful enough to load into an actual task context is itself a signal.
       if (relevant[0]) await store.reinforceMemory(relevant[0].id, 0.05);
 
+      // Associative layer: memories retrieved together for the same task
+      // gently reinforce their co-occurrence link ("fire together, wire
+      // together"), and the top hit's strongest existing associations
+      // surface as a *separate* field -- things related by experience,
+      // not by matching this particular query's wording.
+      if (relevant.length > 1) await associations.coReinforce(relevant.map((memory) => memory.id));
+      let associated: Array<{ memoryId: string; weight: number; viaRelation: string; hops: 1 | 2 }> = [];
+      if (relevant[0]) {
+        const neighbors = await associations.walk(relevant[0].id, 1, 10);
+        const alreadyShown = new Set(relevant.map((memory) => memory.id));
+        associated = neighbors.filter((neighbor) => !alreadyShown.has(neighbor.memoryId));
+      }
+      const associatedMemories = [];
+      for (const link of associated) {
+        try {
+          const memory = await store.get(link.memoryId);
+          if (!memory.supersededBy) associatedMemories.push({ ...memory, associationWeight: link.weight, viaRelation: link.viaRelation });
+        } catch {
+          // A dangling association (its memory file is gone) is skipped, not fatal.
+        }
+      }
+
       const totalTokens = usedTokens + recallTokens;
       return jsonResult({
         objective,
         core_memory: core,
         relevant_memories: relevant,
+        associated_memories: associatedMemories,
         budget: {
           requested_tokens: token_budget,
           estimated_tokens: totalTokens,
