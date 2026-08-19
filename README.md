@@ -8,7 +8,11 @@ Most AI coding tools keep memory local to one machine and one tool. Work done by
 
 ## Status
 
-v0.4.0. Twelve tools, file-backed storage, stdio transport. See [`Roadmap`](#roadmap) below.
+v0.5.0. Thirteen tools, file-backed storage, stdio transport. See [`Roadmap`](#roadmap) below.
+
+## Organization: wing / room / drawer
+
+MyMeM's flat storage maps directly onto the real MemPalace's three-level organizing metaphor (researched in Wave 5, not invented fresh): a **wing** is one `MYMEM_HOME` deployment, a **room** is a memory's `kind` (`fact`/`decision`/`preference`/`todo` -- already a first-class filterable field, not a new one), and a **drawer** is one memory record (one JSON file, as it's always been). This is a reframing, not a new hierarchy or file format.
 
 ## Tools
 
@@ -21,6 +25,7 @@ v0.4.0. Twelve tools, file-backed storage, stdio transport. See [`Roadmap`](#roa
 - **`mymem_supersede`** — correct a memory without deleting it; the original stays retrievable, linked to its replacement, and its validity window closes.
 - **`mymem_pin`** / **`mymem_unpin`** / **`mymem_core_memory`** — a small, agent-curated, always-included memory tier (Letta/MemGPT-style "core memory blocks"), separate from queried recall. Call `mymem_core_memory` at the start of a task alongside `mymem_recall` for things that should never depend on guessing the right query wording.
 - **`mymem_associate`** / **`mymem_associations`** — a stable, experience-based link layer between memories, distinct from decay/salience: association weight does not fade with time, it only moves when reinforced or weakened (asymptotically — diminishing returns, never quite reaching certainty or zero). `mymem_get_context` uses this automatically: memories retrieved together gently reinforce their link, and the top hit's strongest associations surface separately from direct query matches.
+- **`mymem_track_access`** — hippocampal-style consolidation: signal that something was read again. If `ref` is an existing mymem memory id, this reinforces it directly (same mechanism as `mymem_reinforce`, just triggered by access instead of an explicit call). If `ref` is anything else (a file path, a URL — whatever a hook names), it's tracked as a standalone access record with its own decay-adjusted salience. Meant to be wired into a client-side hook (e.g. a Claude Code `PostToolUse` hook on `Read`) so frequently-revisited context gets naturally "stickier" without a manual `mymem_remember` every time. `mymem_get_context` also does this automatically now for every memory it actually returns, not just the single top hit — repeated retrieval strengthens a memory the same way repeated study strengthens a real memory (Ebbinghaus forgetting curve, Wave 4 research).
 
 Nothing durable is ever silently deleted. A correction always supersedes, never erases — core memory blocks are the one exception (`mymem_unpin` is a real delete), since they're working state, not durable facts.
 
@@ -70,13 +75,18 @@ Unit tests cover `decay.ts`, `similarity.ts`, `store.ts`, and `associations.ts` 
 
 Point `MYMEM_HOME` at a folder that's synced between your devices (a git-tracked folder, a cloud-drive folder, whatever you already use) and every MCP client that connects to MyMeM on any of those devices shares the same memory.
 
+### Optional: wire `mymem_track_access` into a hook
+
+`mymem_track_access` is never called by MyMeM on its own -- nothing in this repo runs unattended. If you want repeated file reads to reinforce memory automatically, wire it into your own client's hook config. For Claude Code, a `PostToolUse` hook on `Read` calling the MCP tool with the read file's path as `ref` is enough; this is entirely opt-in and lives in your own settings, not in MyMeM.
+
 ## Roadmap
 
 - **Phase 0** — sync `MYMEM_HOME` between machines via a git remote living in an already-synced cloud-drive folder (no new infrastructure).
 - **Phase 1** — the four base tools, file-backed, no database. *(done)*
 - **Phase 2** — ship an `AGENTS.md` convention alongside MyMeM so even non-MCP tools get baseline shared context.
-- **Phase 3 (advanced recall)** — decay+reinforcement ranking, core memory blocks, bi-temporal recall, lightweight TF-IDF similarity, `mymem_get_context` as the bounded entry point, and an associative "waypoint graph" layer. *(current — this repo, v0.4.0)*
-- **Phase 3.1 (future)** — a real embedding-based semantic layer, evaluated only once TF-IDF's limits are actually felt in practice, not before.
+- **Phase 3 (advanced recall)** — decay+reinforcement ranking, core memory blocks, bi-temporal recall, lightweight TF-IDF similarity, `mymem_get_context` as the bounded entry point, and an associative "waypoint graph" layer. *(done, v0.4.0)*
+- **Phase 4 (hippocampal-style consolidation)** — repeated access strengthens a memory (widened `mymem_get_context` reinforcement, `mymem_track_access` for hook-driven signals on arbitrary refs), and the wing/room/drawer reframing. *(current — this repo, v0.5.0)*
+- **Phase 3.1 / 4.1 (future, explicitly deferred)** — a real embedding-based semantic layer (evaluate only once TF-IDF's limits are actually felt); a standalone background daemon that watches file access the way real MemPalace's `daemon` hook does (a first-of-its-kind architecture change for this repo — needs its own design pass, not started); desktop notifications on auto-capture. None of these are started; `mymem_track_access` today is only ever called explicitly (by an agent or a hook the owner configured), never by an unattended MyMeM-internal process.
 
 ## License
 

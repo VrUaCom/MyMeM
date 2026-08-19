@@ -96,3 +96,41 @@ test("mymem_get_context surfaces associatively-linked memories that the query te
   assert.ok(!ctx.relevant_memories.some((memory: { id: string }) => memory.id === b.remembered.id), "test setup invalid: b matched directly by text");
   assert.ok(ctx.associated_memories.some((memory: { id: string }) => memory.id === b.remembered.id), "b should surface via the associative layer");
 });
+
+test("mymem_get_context reinforces every returned relevant memory, not just the top hit", async () => {
+  const first = await call("mymem_remember", { content: "kryzon telemetry pipeline throughput benchmark", kind: "fact", source_agent: "test", source_device: "test", tags: [] });
+  const second = await call("mymem_remember", { content: "kryzon telemetry pipeline latency benchmark", kind: "fact", source_agent: "test", source_device: "test", tags: [] });
+
+  const ctx = await call("mymem_get_context", { objective: "kryzon telemetry pipeline benchmark", token_budget: 2000 });
+  assert.ok(ctx.relevant_memories.length >= 2, "test setup invalid: expected both memories to be returned");
+
+  const results = await call("mymem_recall", { query: "kryzon telemetry pipeline", limit: 10 });
+  const firstAfter = results.results.find((m: { id: string }) => m.id === first.remembered.id);
+  const secondAfter = results.results.find((m: { id: string }) => m.id === second.remembered.id);
+  assert.equal(firstAfter.accessCount, 1, "first memory should have been reinforced by get_context even though it wasn't the top hit");
+  assert.equal(secondAfter.accessCount, 1, "second memory should also have been reinforced");
+});
+
+test("mymem_track_access reinforces an existing mymem memory when ref is its id", async () => {
+  const memory = await call("mymem_remember", { content: "tracked memory content", kind: "fact", source_agent: "test", source_device: "test", tags: [] });
+  const before = await call("mymem_recall", { query: "tracked memory content", limit: 1 });
+  assert.equal(before.results[0].accessCount, 0);
+
+  const tracked = await call("mymem_track_access", { ref: memory.remembered.id, source: "test-hook" });
+  assert.equal(tracked.tracked.kind, "memory");
+  assert.equal(tracked.tracked.memory.accessCount, 1);
+});
+
+test("mymem_track_access tracks an external ref (not a mymem memory) as a standalone access record", async () => {
+  const tracked1 = await call("mymem_track_access", { ref: "/Users/x/some-external-doc.md", source: "test-hook" });
+  assert.equal(tracked1.tracked.kind, "external-ref");
+  assert.equal(tracked1.tracked.record.accessCount, 1);
+
+  const tracked2 = await call("mymem_track_access", { ref: "/Users/x/some-external-doc.md", source: "test-hook" });
+  assert.equal(tracked2.tracked.record.accessCount, 2, "re-tracking the same external ref should increment, not reset");
+});
+
+test("mymem_track_access does not treat an arbitrary path-shaped ref as a memory id lookup", async () => {
+  const tracked = await call("mymem_track_access", { ref: "../../etc/passwd", source: "test-hook" });
+  assert.equal(tracked.tracked.kind, "external-ref", "a non-UUID ref must never be routed into store.get()");
+});

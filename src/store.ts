@@ -21,6 +21,8 @@ export interface MemoryRecord {
   /** Decay + reinforcement (OpenMemory-style, see Wave 4 research). 0..1, default 0.6. */
   salience: number;
   lastAccessedAt: string;
+  /** Hippocampal-style consolidation (Wave 4/5 research): how many times this memory has been reinforced by being surfaced. */
+  accessCount: number;
   /** Bi-temporal fields (Zep/Graphiti-style, see get_ai_context review). */
   validFrom: string;
   validUntil?: string;
@@ -59,7 +61,7 @@ export class MemoryStore {
     return path.join(this.dir, `${id}.json`);
   }
 
-  async remember(input: Omit<MemoryRecord, "id" | "createdAt" | "salience" | "lastAccessedAt" | "validFrom">): Promise<MemoryRecord> {
+  async remember(input: Omit<MemoryRecord, "id" | "createdAt" | "salience" | "lastAccessedAt" | "validFrom" | "accessCount">): Promise<MemoryRecord> {
     const now = new Date().toISOString();
     const record: MemoryRecord = {
       id: randomUUID(),
@@ -67,6 +69,7 @@ export class MemoryStore {
       salience: DEFAULT_SALIENCE,
       lastAccessedAt: now,
       validFrom: now,
+      accessCount: 0,
       ...input,
     };
     await writeFile(this.filePath(record.id), `${JSON.stringify(record, null, 2)}\n`, "utf8");
@@ -123,11 +126,12 @@ export class MemoryStore {
       .slice(0, opts.limit);
   }
 
-  /** Reinforcement: recall hits and explicit confirmations both raise salience and refresh lastAccessedAt. */
+  /** Reinforcement: recall hits and explicit confirmations both raise salience, refresh lastAccessedAt, and count as one more access -- repeated retrieval strengthens the memory (hippocampal-style consolidation, Wave 4/5 research). */
   async reinforceMemory(id: string, boost = 0.2): Promise<MemoryRecord> {
     const record = await this.get(id);
     record.salience = bumpSalience(record.salience, boost);
     record.lastAccessedAt = new Date().toISOString();
+    record.accessCount = (record.accessCount ?? 0) + 1;
     await this.save(record);
     return record;
   }

@@ -7,12 +7,15 @@ import { z } from "zod";
 import { MemoryStore } from "./store.js";
 import { estimateTokens } from "./tokens.js";
 import { AssociationStore } from "./associations.js";
+import { AccessStore } from "./access.js";
 
 const home = process.env.MYMEM_HOME?.trim() || path.join(homedir(), ".mymem");
 const store = new MemoryStore(home);
 const associations = new AssociationStore(home);
+const access = new AccessStore(home);
 await store.initialize();
 await associations.initialize();
+await access.initialize();
 
 const kind = z.enum(["fact", "decision", "preference", "todo"]);
 
@@ -24,7 +27,7 @@ function errorResult(error: unknown) {
   return { content: [{ type: "text" as const, text: message }], isError: true };
 }
 
-const server = new McpServer({ name: "mymem", version: "0.4.0" });
+const server = new McpServer({ name: "mymem", version: "0.5.0" });
 
 server.registerTool(
   "mymem_remember",
@@ -320,9 +323,12 @@ server.registerTool(
         relevant.push(candidate);
         recallTokens += cost;
       }
-      // The single most relevant recalled memory gets a small reinforcement --
-      // being useful enough to load into an actual task context is itself a signal.
-      if (relevant[0]) await store.reinforceMemory(relevant[0].id, 0.05);
+      // Every memory actually surfaced into a task context gets a small
+      // reinforcement -- being retrieved repeatedly is itself a signal of
+      // relevance (hippocampal-style consolidation, Wave 4/5 research: the
+      // more often something is recalled, the better it "sticks"). Not just
+      // the top hit -- everything that made it into the response.
+      for (const memory of relevant) await store.reinforceMemory(memory.id, 0.05);
 
       // Associative layer: memories retrieved together for the same task
       // gently reinforce their co-occurrence link ("fire together, wire
@@ -360,6 +366,37 @@ server.registerTool(
           truncated: core.length < coreBlocks.length || relevant.length < candidates.length,
         },
       });
+    } catch (error) {
+      return errorResult(error);
+    }
+  },
+);
+
+server.registerTool(
+  "mymem_track_access",
+  {
+    title: "Track an access to a document or memory (hippocampal-style consolidation)",
+    description: "Signal that something was read again -- an external document/file, or an existing mymem memory. Repeated access raises its salience the same way mymem_reinforce does (asymptotic, never silently promotes something to fully trusted). Meant to be called from a client-side hook (e.g. a Claude Code PostToolUse hook on Read) so frequently-revisited context gets naturally 'stickier' without a manual mymem_remember every time. If ref matches an existing mymem memory id, this reinforces that memory directly; otherwise it tracks ref as a standalone access record.",
+    inputSchema: {
+      ref: z.string().min(1).max(2_000),
+      source: z.string().min(1).max(200).default("hook"),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+  },
+  async ({ ref, source }) => {
+    try {
+      // ref is arbitrary caller-supplied text (a file path, a URL, anything a hook wants to
+      // name) -- only treat it as a mymem memory id, and only then hand it to store.get(),
+      // when it's actually shaped like the UUIDs mymem itself issues. Passing arbitrary text
+      // straight into store.get() would let it build a file path outside the memories dir.
+      const looksLikeMemoryId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ref);
+      const existingMemory = looksLikeMemoryId ? await store.get(ref).catch(() => undefined) : undefined;
+      if (existingMemory) {
+        const reinforced = await store.reinforceMemory(ref, 0.05);
+        return jsonResult({ tracked: { kind: "memory", memory: reinforced } });
+      }
+      const record = await access.track(ref, source);
+      return jsonResult({ tracked: { kind: "external-ref", record } });
     } catch (error) {
       return errorResult(error);
     }
