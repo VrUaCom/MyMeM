@@ -134,3 +134,30 @@ test("mymem_track_access does not treat an arbitrary path-shaped ref as a memory
   const tracked = await call("mymem_track_access", { ref: "../../etc/passwd", source: "test-hook" });
   assert.equal(tracked.tracked.kind, "external-ref", "a non-UUID ref must never be routed into store.get()");
 });
+
+test("mymem_associate spans node types: a memory can associate with a core memory block and a tracked access ref", async () => {
+  const memory = await call("mymem_remember", { content: "associative layer spans node types now", kind: "fact", source_agent: "test", source_device: "test", tags: [] });
+  await call("mymem_pin", { name: "cross-type-focus", content: "testing cross-type associations", updated_by: "test" });
+  await call("mymem_track_access", { ref: "/Users/x/cross-type-doc.md", source: "test-hook" });
+
+  const toCore = await call("mymem_associate", { from_id: memory.remembered.id, to_id: "cross-type-focus", to_type: "core", relation: "related_to" });
+  assert.equal(toCore.association.fromType, "memory");
+  assert.equal(toCore.association.toType, "core");
+
+  const toAccess = await call("mymem_associate", { from_id: memory.remembered.id, to_id: "/Users/x/cross-type-doc.md", to_type: "access", relation: "related_to" });
+  assert.equal(toAccess.association.toType, "access");
+
+  const walk = await call("mymem_associations", { node_id: memory.remembered.id, depth: 1, limit: 10 });
+  const types = walk.results.map((r: { nodeType: string }) => r.nodeType).sort();
+  assert.deepEqual(types, ["access", "core"]);
+
+  await call("mymem_unpin", { name: "cross-type-focus" });
+});
+
+test("mymem_associate rejects a core_type node_id that isn't a real pinned block", async () => {
+  const memory = await call("mymem_remember", { content: "another memory for negative test", kind: "fact", source_agent: "test", source_device: "test", tags: [] });
+  await assert.rejects(
+    () => call("mymem_associate", { from_id: memory.remembered.id, to_id: "never-pinned-block", to_type: "core", relation: "related_to" }),
+    /does not match any core node/,
+  );
+});

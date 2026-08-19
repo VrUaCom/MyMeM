@@ -18,6 +18,20 @@ await associations.initialize();
 await access.initialize();
 
 const kind = z.enum(["fact", "decision", "preference", "todo"]);
+const nodeType = z.enum(["memory", "core", "access"]);
+const MEMORY_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Whether a node reference actually resolves, without ever handing arbitrary caller text to a store that would build a file path from it unsanitized. */
+async function nodeExists(type: "memory" | "core" | "access", id: string): Promise<boolean> {
+  if (type === "memory") {
+    if (!MEMORY_ID_PATTERN.test(id)) return false;
+    return (await store.get(id).catch(() => undefined)) !== undefined;
+  }
+  if (type === "core") {
+    return (await store.coreMemory()).some((block) => block.name === id);
+  }
+  return access.exists(id);
+}
 
 function jsonResult(value: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(value, null, 2) }], structuredContent: value as Record<string, unknown> };
@@ -27,7 +41,7 @@ function errorResult(error: unknown) {
   return { content: [{ type: "text" as const, text: message }], isError: true };
 }
 
-const server = new McpServer({ name: "mymem", version: "0.5.0" });
+const server = new McpServer({ name: "mymem", version: "0.6.0" });
 
 server.registerTool(
   "mymem_remember",
@@ -241,25 +255,23 @@ server.registerTool(
 server.registerTool(
   "mymem_associate",
   {
-    title: "Associate or dissociate two memories",
-    description: "Create or change a stable, experience-based link between two memories -- distinct from decay/salience, which fades with time. Association weight only moves when reinforced or weakened (asymptotic: diminishing returns, approaches but never reaches full certainty or zero), never on its own. Use 'reinforce' when two things really do belong together, 'weaken' to correct a link that turned out wrong.",
+    title: "Associate or dissociate two nodes",
+    description: "Create or change a stable, experience-based link between any two mymem nodes -- a memory, a core memory block, or a tracked access record. Distinct from decay/salience, which fades with time. Association weight only moves when reinforced or weakened (asymptotic: diminishing returns, approaches but never reaches full certainty or zero), never on its own. Use 'reinforce' when two things really do belong together, 'weaken' to correct a link that turned out wrong. from_type/to_type default to 'memory' for backward compatibility.",
     inputSchema: {
-      from_id: z.string().uuid(),
-      to_id: z.string().uuid(),
+      from_id: z.string().min(1).max(2_000),
+      from_type: nodeType.default("memory"),
+      to_id: z.string().min(1).max(2_000),
+      to_type: nodeType.default("memory"),
       relation: z.string().min(1).max(100).default("related_to"),
       signal: z.enum(["reinforce", "weaken"]).default("reinforce"),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
   },
-  async ({ from_id, to_id, relation, signal }) => {
+  async ({ from_id, from_type, to_id, to_type, relation, signal }) => {
     try {
-      await store.get(from_id).catch(() => {
-        throw new Error(`from_id ${from_id} does not match any memory.`);
-      });
-      await store.get(to_id).catch(() => {
-        throw new Error(`to_id ${to_id} does not match any memory.`);
-      });
-      const edge = await associations.associate(from_id, to_id, relation, signal);
+      if (!(await nodeExists(from_type, from_id))) throw new Error(`from_id ${from_id} does not match any ${from_type} node.`);
+      if (!(await nodeExists(to_type, to_id))) throw new Error(`to_id ${to_id} does not match any ${to_type} node.`);
+      const edge = await associations.associate({ type: from_type, id: from_id }, { type: to_type, id: to_id }, relation, signal);
       return jsonResult({ association: edge });
     } catch (error) {
       return errorResult(error);
@@ -270,18 +282,19 @@ server.registerTool(
 server.registerTool(
   "mymem_associations",
   {
-    title: "Walk the associative layer from one memory",
-    description: "Short associative paths outward from one memory, ranked by weight (strongest/most-experienced links first) -- not a text search, a graph walk. depth=1 is direct neighbors; depth=2 spreads one hop further (activation spreading), weight-discounted per hop.",
+    title: "Walk the associative layer from one node",
+    description: "Short associative paths outward from one node (a memory, a core memory block, or a tracked access record), ranked by weight (strongest/most-experienced links first) -- not a text search, a graph walk. depth=1 is direct neighbors; depth=2 spreads one hop further (activation spreading), weight-discounted per hop. node_type defaults to 'memory' for backward compatibility.",
     inputSchema: {
-      memory_id: z.string().uuid(),
+      node_id: z.string().min(1).max(2_000),
+      node_type: nodeType.default("memory"),
       depth: z.union([z.literal(1), z.literal(2)]).default(1),
       limit: z.number().int().min(1).max(100).default(20),
     },
     annotations: { readOnlyHint: true },
   },
-  async ({ memory_id, depth, limit }) => {
+  async ({ node_id, node_type, depth, limit }) => {
     try {
-      const results = await associations.walk(memory_id, depth, limit);
+      const results = await associations.walk({ type: node_type, id: node_id }, depth, limit);
       return jsonResult({ results, count: results.length });
     } catch (error) {
       return errorResult(error);
@@ -336,16 +349,19 @@ server.registerTool(
       // surface as a *separate* field -- things related by experience,
       // not by matching this particular query's wording.
       if (relevant.length > 1) await associations.coReinforce(relevant.map((memory) => memory.id));
-      let associated: Array<{ memoryId: string; weight: number; viaRelation: string; hops: 1 | 2 }> = [];
+      let associated: Array<{ nodeId: string; nodeType: "memory" | "core" | "access"; weight: number; viaRelation: string; hops: 1 | 2 }> = [];
       if (relevant[0]) {
-        const neighbors = await associations.walk(relevant[0].id, 1, 10);
+        const neighbors = await associations.walk({ type: "memory", id: relevant[0].id }, 1, 10);
         const alreadyShown = new Set(relevant.map((memory) => memory.id));
-        associated = neighbors.filter((neighbor) => !alreadyShown.has(neighbor.memoryId));
+        // associated_memories is specifically memories -- a core-memory-block or
+        // access-record neighbor is a real association but doesn't fit this
+        // field's MemoryRecord shape, so it's omitted here, not an error.
+        associated = neighbors.filter((neighbor) => neighbor.nodeType === "memory" && !alreadyShown.has(neighbor.nodeId));
       }
       const associatedMemories = [];
       for (const link of associated) {
         try {
-          const memory = await store.get(link.memoryId);
+          const memory = await store.get(link.nodeId);
           if (!memory.supersededBy) associatedMemories.push({ ...memory, associationWeight: link.weight, viaRelation: link.viaRelation });
         } catch {
           // A dangling association (its memory file is gone) is skipped, not fatal.
@@ -389,8 +405,7 @@ server.registerTool(
       // name) -- only treat it as a mymem memory id, and only then hand it to store.get(),
       // when it's actually shaped like the UUIDs mymem itself issues. Passing arbitrary text
       // straight into store.get() would let it build a file path outside the memories dir.
-      const looksLikeMemoryId = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(ref);
-      const existingMemory = looksLikeMemoryId ? await store.get(ref).catch(() => undefined) : undefined;
+      const existingMemory = MEMORY_ID_PATTERN.test(ref) ? await store.get(ref).catch(() => undefined) : undefined;
       if (existingMemory) {
         const reinforced = await store.reinforceMemory(ref, 0.05);
         return jsonResult({ tracked: { kind: "memory", memory: reinforced } });

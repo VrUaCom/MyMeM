@@ -76,4 +76,9 @@ export class AccessStore {
     if (!record) return undefined;
     return currentWeight(record.salience, record.lastAccessedAt);
   }
+
+  /** Whether ref has ever been tracked -- used to validate an associative-layer edge that points at an access record. */
+  async exists(ref: string): Promise<boolean> {
+    return (await this.read(ref)) !== undefined;
+  }
 }
