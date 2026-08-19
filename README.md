@@ -8,11 +8,11 @@ Most AI coding tools keep memory local to one machine and one tool. Work done by
 
 ## Status
 
-v0.3.0. Ten tools, file-backed storage, stdio transport. See [`Roadmap`](#roadmap) below.
+v0.4.0. Twelve tools, file-backed storage, stdio transport. See [`Roadmap`](#roadmap) below.
 
 ## Tools
 
-- **`mymem_get_context`** — **start here.** The bounded primary entry point: one objective, one token budget, one call. Returns core memory (always included) plus ranked recall results filling the rest of the budget. Mirrors the `get_ai_context` pattern from the sibling `mcp-space-dmc-rengine` server, so it needs no new mental model if you're already used to that workflow.
+- **`mymem_get_context`** — **start here.** The bounded primary entry point: one objective, one token budget, one call. Returns core memory (always included), ranked recall results filling the rest of the budget, and a separate `associated_memories` field (things linked by experience, not by matching your query). Mirrors the `get_ai_context` pattern from the sibling `mcp-space-dmc-rengine` server, so it needs no new mental model if you're already used to that workflow.
 - **`mymem_remember`** — store one memory (`fact`, `decision`, `preference`, or `todo`), tagged with which agent and device recorded it.
 - **`mymem_recall`** — ranked search over current (non-superseded) memories: lexical/TF-IDF similarity combined with decay-adjusted salience, so relevant *and* fresh (or reinforced) memories rank highest. Not neural embeddings — a dependency-free, zero-cost lexical layer; see [Design notes](#design-notes).
 - **`mymem_reinforce`** — explicitly confirm a memory is still relevant, raising its salience and resetting its decay clock.
@@ -20,6 +20,7 @@ v0.3.0. Ten tools, file-backed storage, stdio transport. See [`Roadmap`](#roadma
 - **`mymem_recall_as_of`** — bi-temporal query: "what did we believe as of `<date>`," not just what's true now. Walks each memory's supersede chain to the version valid at that timestamp.
 - **`mymem_supersede`** — correct a memory without deleting it; the original stays retrievable, linked to its replacement, and its validity window closes.
 - **`mymem_pin`** / **`mymem_unpin`** / **`mymem_core_memory`** — a small, agent-curated, always-included memory tier (Letta/MemGPT-style "core memory blocks"), separate from queried recall. Call `mymem_core_memory` at the start of a task alongside `mymem_recall` for things that should never depend on guessing the right query wording.
+- **`mymem_associate`** / **`mymem_associations`** — a stable, experience-based link layer between memories, distinct from decay/salience: association weight does not fade with time, it only moves when reinforced or weakened (asymptotically — diminishing returns, never quite reaching certainty or zero). `mymem_get_context` uses this automatically: memories retrieved together gently reinforce their link, and the top hit's strongest associations surface separately from direct query matches.
 
 Nothing durable is ever silently deleted. A correction always supersedes, never erases — core memory blocks are the one exception (`mymem_unpin` is a real delete), since they're working state, not durable facts.
 
@@ -30,6 +31,7 @@ MyMeM's recall/decay/core-memory design is a deliberate synthesis, not invented 
 - **Decay + reinforcement** — tiered hot/warm/cold formula ported from [OpenMemory (CaviraOSS)](https://github.com/CaviraOSS/OpenMemory)'s published approach.
 - **Core memory blocks** — pattern from [Letta/MemGPT](https://github.com/letta-ai/letta)'s self-editing core-context model.
 - **Bi-temporal recall** — pattern from [Zep/Graphiti](https://github.com/getzep/graphiti)'s "what was true as of when" fact-versioning.
+- **Associative layer** — a "waypoint graph" (OpenMemory's term) of short, weighted paths between memories, kept deliberately separate from time-based decay: an association is meant to behave like human associative memory, strengthening with repeated exposure and otherwise just sitting there, rather than fading on a clock.
 - **TF-IDF similarity** — a plain, zero-dependency lexical layer (no model download, no paid API), chosen deliberately over a real embedding model until usage shows the gap actually matters. Honest about its limits: it catches shared-vocabulary paraphrase, not deep semantic meaning.
 
 ## Install & run
@@ -65,7 +67,7 @@ Point `MYMEM_HOME` at a folder that's synced between your devices (a git-tracked
 - **Phase 0** — sync `MYMEM_HOME` between machines via a git remote living in an already-synced cloud-drive folder (no new infrastructure).
 - **Phase 1** — the four base tools, file-backed, no database. *(done)*
 - **Phase 2** — ship an `AGENTS.md` convention alongside MyMeM so even non-MCP tools get baseline shared context.
-- **Phase 3 (advanced recall)** — decay+reinforcement ranking, core memory blocks, bi-temporal recall, lightweight TF-IDF similarity, and `mymem_get_context` composing all of it into one bounded entry-point call. *(current — this repo, v0.3.0)*
+- **Phase 3 (advanced recall)** — decay+reinforcement ranking, core memory blocks, bi-temporal recall, lightweight TF-IDF similarity, `mymem_get_context` as the bounded entry point, and an associative "waypoint graph" layer. *(current — this repo, v0.4.0)*
 - **Phase 3.1 (future)** — a real embedding-based semantic layer, evaluated only once TF-IDF's limits are actually felt in practice, not before.
 
 ## License
