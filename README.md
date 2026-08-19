@@ -8,16 +8,28 @@ Most AI coding tools keep memory local to one machine and one tool. Work done by
 
 ## Status
 
-Early / v0.1.0. Four tools, file-backed storage, stdio transport. See [`Roadmap`](#roadmap) below.
+v0.2.0. Nine tools, file-backed storage, stdio transport. See [`Roadmap`](#roadmap) below.
 
 ## Tools
 
 - **`mymem_remember`** — store one memory (`fact`, `decision`, `preference`, or `todo`), tagged with which agent and device recorded it.
-- **`mymem_recall`** — keyword search over current (non-superseded) memories.
+- **`mymem_recall`** — ranked search over current (non-superseded) memories: lexical/TF-IDF similarity combined with decay-adjusted salience, so relevant *and* fresh (or reinforced) memories rank highest. Not neural embeddings — a dependency-free, zero-cost lexical layer; see [Design notes](#design-notes).
+- **`mymem_reinforce`** — explicitly confirm a memory is still relevant, raising its salience and resetting its decay clock.
 - **`mymem_list_recent`** — "what changed since I last looked," optionally scoped to one device.
-- **`mymem_supersede`** — correct a memory without deleting it; the original stays retrievable, linked to its replacement.
+- **`mymem_recall_as_of`** — bi-temporal query: "what did we believe as of `<date>`," not just what's true now. Walks each memory's supersede chain to the version valid at that timestamp.
+- **`mymem_supersede`** — correct a memory without deleting it; the original stays retrievable, linked to its replacement, and its validity window closes.
+- **`mymem_pin`** / **`mymem_unpin`** / **`mymem_core_memory`** — a small, agent-curated, always-included memory tier (Letta/MemGPT-style "core memory blocks"), separate from queried recall. Call `mymem_core_memory` at the start of a task alongside `mymem_recall` for things that should never depend on guessing the right query wording.
 
-Nothing is ever silently deleted. A correction always supersedes, never erases.
+Nothing durable is ever silently deleted. A correction always supersedes, never erases — core memory blocks are the one exception (`mymem_unpin` is a real delete), since they're working state, not durable facts.
+
+## Design notes
+
+MyMeM's recall/decay/core-memory design is a deliberate synthesis, not invented from scratch — each piece is ported from an existing, researched system rather than reinvented:
+
+- **Decay + reinforcement** — tiered hot/warm/cold formula ported from [OpenMemory (CaviraOSS)](https://github.com/CaviraOSS/OpenMemory)'s published approach.
+- **Core memory blocks** — pattern from [Letta/MemGPT](https://github.com/letta-ai/letta)'s self-editing core-context model.
+- **Bi-temporal recall** — pattern from [Zep/Graphiti](https://github.com/getzep/graphiti)'s "what was true as of when" fact-versioning.
+- **TF-IDF similarity** — a plain, zero-dependency lexical layer (no model download, no paid API), chosen deliberately over a real embedding model until usage shows the gap actually matters. Honest about its limits: it catches shared-vocabulary paraphrase, not deep semantic meaning.
 
 ## Install & run
 
@@ -50,9 +62,10 @@ Point `MYMEM_HOME` at a folder that's synced between your devices (a git-tracked
 ## Roadmap
 
 - **Phase 0** — sync `MYMEM_HOME` between machines via a git remote living in an already-synced cloud-drive folder (no new infrastructure).
-- **Phase 1** — this repo: the four tools above, file-backed, no database. *(current)*
+- **Phase 1** — the four base tools, file-backed, no database. *(done)*
 - **Phase 2** — ship an `AGENTS.md` convention alongside MyMeM so even non-MCP tools get baseline shared context.
-- **Phase 3** — evaluate a real memory-engine backend (only once real usage shows the need) — candidates already researched: Mem0/OpenMemory, CouchDB/PouchDB.
+- **Phase 3 (advanced recall)** — decay+reinforcement ranking, core memory blocks, bi-temporal recall, lightweight TF-IDF similarity. *(current — this repo, v0.2.0)*
+- **Phase 3.1 (future)** — a real embedding-based semantic layer, evaluated only once TF-IDF's limits are actually felt in practice, not before.
 
 ## License
 
