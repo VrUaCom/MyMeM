@@ -46,6 +46,14 @@ node dist/index.js
 
 By default memories are stored under `~/.mymem/memories/`. Override with `MYMEM_HOME`.
 
+### Tests
+
+```bash
+npm test
+```
+
+Unit tests cover `decay.ts`, `similarity.ts`, `store.ts`, and `associations.ts` directly; `test/mcp-server.test.ts` drives the built server over real stdio MCP transport to cover the tool layer itself (budget-fitting in `mymem_get_context`, cross-tool wiring between recall/associate/get_context).
+
 ### Add to an MCP client (e.g. Claude Code / Claude Desktop)
 
 ```json

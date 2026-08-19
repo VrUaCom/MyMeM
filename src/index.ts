@@ -250,6 +250,12 @@ server.registerTool(
   },
   async ({ from_id, to_id, relation, signal }) => {
     try {
+      await store.get(from_id).catch(() => {
+        throw new Error(`from_id ${from_id} does not match any memory.`);
+      });
+      await store.get(to_id).catch(() => {
+        throw new Error(`to_id ${to_id} does not match any memory.`);
+      });
       const edge = await associations.associate(from_id, to_id, relation, signal);
       return jsonResult({ association: edge });
     } catch (error) {
@@ -299,7 +305,7 @@ server.registerTool(
       const core = [];
       for (const block of coreBlocks) {
         const cost = estimateTokens(block.content);
-        if (usedTokens + cost > token_budget) break; // core memory is small by design; a single huge block still can't blow the whole budget
+        if (usedTokens + cost > token_budget) continue; // skip, don't stop -- one oversized block must not silently exclude every smaller one that follows
         core.push(block);
         usedTokens += cost;
       }
