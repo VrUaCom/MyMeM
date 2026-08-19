@@ -5,6 +5,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { MemoryStore } from "./store.js";
+import { estimateTokens } from "./tokens.js";
 
 const home = process.env.MYMEM_HOME?.trim() || path.join(homedir(), ".mymem");
 const store = new MemoryStore(home);
@@ -20,7 +21,7 @@ function errorResult(error: unknown) {
   return { content: [{ type: "text" as const, text: message }], isError: true };
 }
 
-const server = new McpServer({ name: "mymem", version: "0.2.0" });
+const server = new McpServer({ name: "mymem", version: "0.3.0" });
 
 server.registerTool(
   "mymem_remember",
@@ -225,6 +226,63 @@ server.registerTool(
     try {
       const blocks = await store.coreMemory();
       return jsonResult({ blocks, count: blocks.length });
+    } catch (error) {
+      return errorResult(error);
+    }
+  },
+);
+
+server.registerTool(
+  "mymem_get_context",
+  {
+    title: "Get bounded context for a task (primary entry point)",
+    description: "The recommended first call for any task: one objective, one token budget, one response -- core memory blocks (always included, since they're small and meant to be known) plus ranked recall results filling the remaining budget. Mirrors the get_ai_context pattern from the sibling mcp-space-dmc-rengine server, so an agent already used to that workflow needs no new mental model here.",
+    inputSchema: {
+      objective: z.string().min(1).max(2_000),
+      kind: kind.optional(),
+      token_budget: z.number().int().min(256).max(8_000).default(1_500),
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false },
+  },
+  async ({ objective, kind: memoryKind, token_budget }) => {
+    try {
+      const coreBlocks = await store.coreMemory();
+      let usedTokens = 0;
+      const core = [];
+      for (const block of coreBlocks) {
+        const cost = estimateTokens(block.content);
+        if (usedTokens + cost > token_budget) break; // core memory is small by design; a single huge block still can't blow the whole budget
+        core.push(block);
+        usedTokens += cost;
+      }
+
+      const remaining = Math.max(0, token_budget - usedTokens);
+      const candidates = await store.recall(objective, { kind: memoryKind, limit: 100 });
+      const relevant = [];
+      let recallTokens = 0;
+      for (const candidate of candidates) {
+        const cost = estimateTokens(candidate.content);
+        if (recallTokens + cost > remaining) continue; // skip, don't stop -- a later smaller-but-relevant memory can still fit
+        relevant.push(candidate);
+        recallTokens += cost;
+      }
+      // The single most relevant recalled memory gets a small reinforcement --
+      // being useful enough to load into an actual task context is itself a signal.
+      if (relevant[0]) await store.reinforceMemory(relevant[0].id, 0.05);
+
+      const totalTokens = usedTokens + recallTokens;
+      return jsonResult({
+        objective,
+        core_memory: core,
+        relevant_memories: relevant,
+        budget: {
+          requested_tokens: token_budget,
+          estimated_tokens: totalTokens,
+          core_memory_tokens: usedTokens,
+          recall_tokens: recallTokens,
+          truncated: core.length < coreBlocks.length || relevant.length < candidates.length,
+        },
+      });
     } catch (error) {
       return errorResult(error);
     }

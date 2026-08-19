@@ -8,10 +8,11 @@ Most AI coding tools keep memory local to one machine and one tool. Work done by
 
 ## Status
 
-v0.2.0. Nine tools, file-backed storage, stdio transport. See [`Roadmap`](#roadmap) below.
+v0.3.0. Ten tools, file-backed storage, stdio transport. See [`Roadmap`](#roadmap) below.
 
 ## Tools
 
+- **`mymem_get_context`** — **start here.** The bounded primary entry point: one objective, one token budget, one call. Returns core memory (always included) plus ranked recall results filling the rest of the budget. Mirrors the `get_ai_context` pattern from the sibling `mcp-space-dmc-rengine` server, so it needs no new mental model if you're already used to that workflow.
 - **`mymem_remember`** — store one memory (`fact`, `decision`, `preference`, or `todo`), tagged with which agent and device recorded it.
 - **`mymem_recall`** — ranked search over current (non-superseded) memories: lexical/TF-IDF similarity combined with decay-adjusted salience, so relevant *and* fresh (or reinforced) memories rank highest. Not neural embeddings — a dependency-free, zero-cost lexical layer; see [Design notes](#design-notes).
 - **`mymem_reinforce`** — explicitly confirm a memory is still relevant, raising its salience and resetting its decay clock.
@@ -64,7 +65,7 @@ Point `MYMEM_HOME` at a folder that's synced between your devices (a git-tracked
 - **Phase 0** — sync `MYMEM_HOME` between machines via a git remote living in an already-synced cloud-drive folder (no new infrastructure).
 - **Phase 1** — the four base tools, file-backed, no database. *(done)*
 - **Phase 2** — ship an `AGENTS.md` convention alongside MyMeM so even non-MCP tools get baseline shared context.
-- **Phase 3 (advanced recall)** — decay+reinforcement ranking, core memory blocks, bi-temporal recall, lightweight TF-IDF similarity. *(current — this repo, v0.2.0)*
+- **Phase 3 (advanced recall)** — decay+reinforcement ranking, core memory blocks, bi-temporal recall, lightweight TF-IDF similarity, and `mymem_get_context` composing all of it into one bounded entry-point call. *(current — this repo, v0.3.0)*
 - **Phase 3.1 (future)** — a real embedding-based semantic layer, evaluated only once TF-IDF's limits are actually felt in practice, not before.
 
 ## License
